@@ -1,5 +1,5 @@
+import ast
 import os
-from src.agent.github_pr import open_draft_pull_request
 from pathlib import Path
 from typing import TypedDict
 
@@ -8,6 +8,7 @@ from google.genai import types
 from langgraph.graph import END, START, StateGraph
 
 from src.agent.config import settings
+from src.agent.github_pr import open_draft_pull_request
 from src.agent.sandbox import run_tests_in_sandbox
 from src.agent.schemas import CrashContext, DiagnosisPlan
 
@@ -34,13 +35,21 @@ def load_broken_file(state: AgentState) -> dict:
         "attempts": 0,
         "test_passed": False,
         "test_output": "",
+        "pr_url": "",
     }
 
 
 def diagnose_and_patch(state: AgentState) -> dict:
-    client = genai.Client(api_key=settings.gemini_api_key,http_options=types.HttpOptions(api_version="v1beta"),)
+    client = genai.Client(
+        api_key=settings.gemini_api_key,
+        http_options=types.HttpOptions(api_version="v1beta"),
+    )
     crash = state["crash"]
     current_attempt = state["attempts"] + 1
+
+    target_path = Path(state["relative_file_path"])
+    test_path = target_path.parent / f"test_{target_path.name}"
+    test_code = test_path.read_text(encoding="utf-8") if test_path.exists() else ""
 
     retry_feedback = ""
     if state["test_output"]:
@@ -55,9 +64,13 @@ def diagnose_and_patch(state: AgentState) -> dict:
         f"Error: {crash.error_type}: {crash.error_message}\n"
         f"File: {state['relative_file_path']} (line {crash.line_number} in {crash.function_name})\n\n"
         f"Stack Trace:\n{crash.stack_trace}\n\n"
-        f"Current Source Code:\n```python\n{state['original_code']}\n```\n"
+        f"Current Source Code:\n```python\n{state['original_code']}\n```\n\n"
+        f"Existing Unit Tests (must pass):\n```python\n{test_code}\n```\n"
         f"{retry_feedback}\n\n"
-        "Provide the root cause, a short summary of the fix, and the complete updated Python file."
+        "Requirements:\n"
+        "1. Return the complete, properly formatted multi-line Python file using standard newline characters (\\n).\n"
+        "2. Do NOT squash code onto a single line.\n"
+        "3. Preserve existing logging and function signatures so all unit tests pass."
     )
 
     response = client.models.generate_content(
@@ -83,6 +96,15 @@ def apply_and_verify(state: AgentState) -> dict:
     target_path = Path(state["relative_file_path"])
     plan = state["diagnosis"]
 
+    try:
+        ast.parse(plan.patched_code)
+    except SyntaxError as exc:
+        print(f"[Failed] Invalid Python syntax on attempt {state['attempts']}: {exc}")
+        return {
+            "test_passed": False,
+            "test_output": f"SyntaxError in generated code: {exc}",
+        }
+
     # Write candidate patch to disk for test verification
     target_path.write_text(plan.patched_code, encoding="utf-8")
 
@@ -100,6 +122,7 @@ def apply_and_verify(state: AgentState) -> dict:
         "test_passed": passed,
         "test_output": output,
     }
+
 
 def create_pr(state: AgentState) -> dict:
     pr_url = open_draft_pull_request(
@@ -125,12 +148,12 @@ def build_devops_agent():
     workflow.add_node("load_broken_file", load_broken_file)
     workflow.add_node("diagnose_and_patch", diagnose_and_patch)
     workflow.add_node("apply_and_verify", apply_and_verify)
+    workflow.add_node("create_pr", create_pr)
 
     workflow.add_edge(START, "load_broken_file")
     workflow.add_edge("load_broken_file", "diagnose_and_patch")
     workflow.add_edge("diagnose_and_patch", "apply_and_verify")
     workflow.add_conditional_edges("apply_and_verify", should_retry)
-    workflow.add_node("create_pr", create_pr)
     workflow.add_edge("create_pr", END)
 
     return workflow.compile()
