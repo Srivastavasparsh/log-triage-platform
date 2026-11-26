@@ -15,6 +15,8 @@ def calculate_unit_price(total_amount: float, item_count: int) -> float:
     try:
         discount_rate = 0.10
         net_amount = total_amount * (1 - discount_rate)
+        if item_count == 0:
+            return 0.0
         return round(net_amount / item_count, 2)
     except Exception as error:
         trace = traceback.format_exc()
