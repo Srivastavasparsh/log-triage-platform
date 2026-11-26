@@ -13,6 +13,9 @@ logger.addHandler(file_handler)
 
 def calculate_unit_price(total_amount: float, item_count: int) -> float:
     try:
+        if item_count == 0:
+            return 0.0
+
         discount_rate = 0.10
         net_amount = total_amount * (1 - discount_rate)
         return round(net_amount / item_count, 2)
