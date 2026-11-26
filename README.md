@@ -4,6 +4,12 @@ An event-driven, self-healing incident remediation pipeline built with **Python,
 
 When a service writes an unhandled exception traceback to `logs/`, the ingestion daemon parses the stack trace in real time, triggers a stateful **Diagnose → Patch → Verify** agent loop, validates the generated fix against the service's test suite, and opens a **Draft Pull Request** with a root-cause report.
 
+## Demo
+
+
+https://github.com/user-attachments/assets/adfbf545-18bd-4ea4-85c8-54a98fcde784
+
+
 ## System Architecture
 
 1. **Real-Time Log Ingestion (`src/ingester.py`):** Uses `watchdog` with byte-offset tracking and multi-line traceback grouping to detect `ERROR` events without duplicate reads or test-log feedback loops.
